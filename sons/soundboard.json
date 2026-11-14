@@ -1,0 +1,107 @@
+{
+  "sounds": {
+    "applaudissements.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        49
+      ],
+      "image": ""
+    },
+    "bip.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        50
+      ],
+      "image": ""
+    },
+    "boing.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        51
+      ],
+      "image": ""
+    },
+    "laser.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        52
+      ],
+      "image": ""
+    },
+    "sirene.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        53
+      ],
+      "image": ""
+    },
+    "tada.wav": {
+      "name": "",
+      "icon": "🔊",
+      "volume": 1.0,
+      "mode": "restart",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "stop_others": false,
+      "mute_others": false,
+      "mute_voice": false,
+      "favorite": false,
+      "hotkey": [
+        6,
+        54
+      ],
+      "image": ""
+    }
+  },
+  "boards": {}
+}

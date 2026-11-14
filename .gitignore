@@ -1,0 +1,12 @@
+# environnement / caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# réglages propres à la machine (périphériques audio, gains...)
+config.json
+
+# sons supprimés depuis l'interface et anciens scripts non publiés
+sons/_corbeille/
+_archive_non_publie/
