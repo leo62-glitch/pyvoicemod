@@ -1,6 +1,7 @@
 """
 Micro virtuel « intégré » — ce que Voicemod fait avec son driver voicemodvad.sys
-et son outil AudioEndPointTool.exe, refait en Python.
+et son outil AudioEndPointTool.exe, refait en Python avec VB-CABLE comme driver
+(aucune dépendance à un fichier Voicemod).
 
 Comment fait Voicemod (analysé sur l'installation locale) :
   * un driver noyau (dérivé de l'exemple Microsoft « sysvad ») crée une paire de
@@ -14,7 +15,9 @@ Comment fait Voicemod (analysé sur l'installation locale) :
     donc Discord (réglé sur « Default ») l'utilise sans rien toucher.
 
 On ne peut pas livrer un driver noyau signé depuis Python, alors :
-  1. on réutilise un câble déjà installé (driver Voicemod, VB-CABLE, Voicemeeter) ;
+  1. on réutilise VB-CABLE (ou Voicemeeter, du même éditeur) s'il est déjà installé ;
+     le driver de Voicemod n'est volontairement PAS utilisé : Py Mod ne dépend
+     d'aucun fichier Voicemod ;
   2. sinon on télécharge et installe VB-CABLE (gratuit, donationware) — Windows
      affiche une seule fenêtre pour accepter le pilote, impossible à éviter ;
   3. on rend le micro virtuel « micro par défaut » (comme AudioEndPointTool) et on
@@ -82,8 +85,7 @@ class Cable:
             return self.out_device
 
 
-KNOWN_CABLES = [
-    Cable("Driver Voicemod", "dummy output", "microphone (voicemod)"),
+KNOWN_CABLES = [  # le driver Voicemod (« Dummy Output ») est exclu exprès
     Cable("VB-CABLE", "cable input", "cable output"),
     Cable("Voicemeeter", "voicemeeter input", "voicemeeter output"),
     Cable("Voicemeeter AUX", "voicemeeter aux input", "voicemeeter aux output"),

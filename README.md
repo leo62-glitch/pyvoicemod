@@ -16,8 +16,9 @@ voient comme un micro normal.
 - **Labo de voix** : égaliseur 3 bandes et réglages fins.
 - **Réglages audio** : choix du micro, de la sortie virtuelle et du casque
   (« m'entendre »), gains séparés voix / sons, mode mixeur.
-- **Micro virtuel** : détection et installation assistée d'un câble audio virtuel
-  (`virtualmic.py`), le rôle que joue le driver noyau dans Voicemod.
+- **Micro virtuel** : détection et installation automatique de VB-CABLE
+  (`virtualmic.py`), puis bascule du micro par défaut de Windows. Aucun fichier
+  ni driver Voicemod n'est utilisé.
 - Moteur PortAudio (sounddevice) à faible latence, avec repli automatique sur deux
   flux reliés par un tampon quand micro et sortie ne sont pas sur la même API
   Windows (`engine.py`).
@@ -32,10 +33,11 @@ python -m venv .venv
 .\.venv\Scripts\python.exe gui_qt.py
 ```
 
-Pour servir de micro dans une autre application, installe un câble audio virtuel
-(par exemple VB-Audio Virtual Cable), choisis « CABLE Input » comme sortie
-virtuelle dans *Réglages audio*, et « CABLE Output » comme micro dans Discord.
-L'onglet Réglages propose cette installation.
+Pour servir de micro dans une autre application, Py Mod utilise VB-CABLE
+(VB-Audio Virtual Cable, gratuit). S'il n'est pas installé, l'onglet Audio propose
+« Installer le micro virtuel » : téléchargement et installation silencieuse, puis
+« CABLE Output » devient le micro par défaut de Windows. Si une application a un
+micro précis de sélectionné, choisis-y « CABLE Output ».
 
 Au premier lancement sans son, l'interface peut générer quelques sons de démo
 synthétisés (`demo_sounds.py`). Les réglages sont enregistrés dans `config.json`

@@ -3,8 +3,8 @@ Moteur audio : micro -> voix -> (+ soundboard) -> sortie virtuelle
                                                +-> casque (retour "m'entendre")
 
 Flux PortAudio (via sounddevice) :
-  * un flux duplex micro -> sortie virtuelle ("Dummy Output" du driver Voicemod,
-    "CABLE Input" de VB-Cable...) dont le micro associé est lu par Discord ;
+  * un flux duplex micro -> sortie virtuelle ("CABLE Input" de VB-CABLE,
+    "Voicemeeter Input"...) dont le micro associé est lu par Discord ;
     si micro et sortie ne sont pas sur la même API Windows (MME / WASAPI...),
     PortAudio refuse le duplex : on ouvre alors deux flux reliés par un tampon,
   * un flux de sortie casque alimenté par un tampon circulaire.
@@ -56,7 +56,7 @@ def list_devices():
 
 
 def find_virtual_cable():
-    """Sortie du câble virtuel (driver Voicemod, VB-Cable, Voicemeeter...) ou None.
+    """Sortie du câble virtuel (VB-CABLE, Voicemeeter...) ou None.
 
     La détection complète (micro associé, micro par défaut Windows) est dans virtualmic.py.
     """
@@ -69,7 +69,7 @@ def find_virtual_cable():
         pass
     for i, name, _, nout in list_devices():
         low = name.lower()
-        if nout and ("cable input" in low or "voicemeeter input" in low or "dummy output" in low):
+        if nout and ("cable input" in low or "voicemeeter input" in low):
             return i
     return None
 

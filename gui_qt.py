@@ -2821,13 +2821,13 @@ class App(QWidget):
         help_card = Card(22, 8)
         help_card.lay.addWidget(label("Utiliser ta voix modifiée dans Discord, OBS ou un jeu", 12, QFont.DemiBold))
         help_card.lay.addWidget(label(
-            "Py Mod se branche tout seul : il détecte un micro virtuel (driver Voicemod, VB-CABLE, Voicemeeter), "
+            "Py Mod se branche tout seul : il détecte un micro virtuel (VB-CABLE ou Voicemeeter), "
             "y envoie ta voix modifiée et le déclare micro par défaut de Windows. Discord, les jeux et les "
             "navigateurs réglés sur « Default » l'utilisent donc sans rien changer.\n\n"
             "Pas de micro virtuel ? Onglet Audio → « Installer le micro virtuel » : VB-CABLE (gratuit) est "
             "téléchargé et installé, Windows demande une seule fois d'accepter le pilote.\n\n"
-            "Si une appli a un micro précis de sélectionné, choisis-y « Microphone (Voicemod) » ou "
-            "« CABLE Output » (le nom exact est affiché dans Audio → Paramètres avancés).\n\n"
+            "Si une appli a un micro précis de sélectionné, choisis-y « CABLE Output » "
+            "(le nom exact est affiché dans Audio → Paramètres avancés).\n\n"
             "Les faders jaunes règlent ce que TU entends dans ton casque, les cyan ce qui part vers "
             "la sortie virtuelle (ce que tes amis entendent).", 10, color=MUTED, wrap=True))
         hl.addWidget(help_card)
