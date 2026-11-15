@@ -1,27 +1,27 @@
 # Py Mod (PyVoiceMod)
 
-Un voice changer + soundboard **100 % Python**, avec une interface **Qt (PySide6)**.
-Le micro passe par une chaîne d'effets temps réel (numpy / scipy), est mixé avec
-une soundboard, puis envoyé vers un micro virtuel que Discord, les jeux ou OBS
-voient comme un micro normal.
+A voice changer + soundboard written in **100% Python**, with a **Qt (PySide6)**
+interface. The microphone goes through a real-time effects chain (numpy / scipy),
+is mixed with a soundboard, then sent to a virtual microphone that Discord, games
+or OBS see as a regular mic.
 
-## Fonctionnalités
+## Features
 
-- **Voix** : catalogue de presets (robot, monstre, chipmunk, écho, vocodeur,
-  auto-tune, wah-wah…) construits comme des graphes de nœuds DSP écrits from scratch
+- **Voices**: a catalogue of presets (robot, monster, chipmunk, echo, vocoder,
+  auto-tune, wah-wah…) built as graphs of DSP nodes written from scratch
   (`dsp.py`, `presets.py`).
-- **Soundboard** : bibliothèque de sons, soundboards par dossier, modes de lecture
-  (superposer, redémarrer, stopper, boucle…), fondu, favoris, images, **raccourcis
-  clavier globaux** Win32 qui marchent même quand un jeu a le focus (`hotkeys.py`).
-- **Labo de voix** : égaliseur 3 bandes et réglages fins.
-- **Réglages audio** : choix du micro, de la sortie virtuelle et du casque
-  (« m'entendre »), gains séparés voix / sons, mode mixeur.
-- **Micro virtuel** : détection et installation automatique de VB-CABLE
-  (`virtualmic.py`), puis bascule du micro par défaut de Windows. Aucun fichier
-  ni driver Voicemod n'est utilisé.
-- Moteur PortAudio (sounddevice) à faible latence, avec repli automatique sur deux
-  flux reliés par un tampon quand micro et sortie ne sont pas sur la même API
-  Windows (`engine.py`).
+- **Soundboard**: sound library, per-folder soundboards, playback modes
+  (overlap, restart, stop, loop…), fades, favourites, images, **global Win32
+  hotkeys** that keep working while a game has focus (`hotkeys.py`).
+- **Voice lab**: 3-band equalizer and fine-tuning controls.
+- **Audio settings**: choice of microphone, virtual output and headphones
+  ("hear myself"), separate voice / sound gains, mixer mode.
+- **Virtual microphone**: automatic detection and installation of VB-CABLE
+  (`virtualmic.py`), then switching of the Windows default microphone. No
+  Voicemod file or driver is used.
+- Low-latency PortAudio engine (sounddevice), with an automatic fallback to two
+  buffer-linked streams when the microphone and the output are not on the same
+  Windows host API (`engine.py`).
 
 ## Installation
 
@@ -33,28 +33,28 @@ python -m venv .venv
 .\.venv\Scripts\python.exe gui_qt.py
 ```
 
-Pour servir de micro dans une autre application, Py Mod utilise VB-CABLE
-(VB-Audio Virtual Cable, gratuit). S'il n'est pas installé, l'onglet Audio propose
-« Installer le micro virtuel » : téléchargement et installation silencieuse, puis
-« CABLE Output » devient le micro par défaut de Windows. Si une application a un
-micro précis de sélectionné, choisis-y « CABLE Output ».
+To act as a microphone in another application, Py Mod uses VB-CABLE
+(VB-Audio Virtual Cable, free). If it is not installed, the Audio tab offers
+"Install the virtual microphone": silent download and installation, after which
+"CABLE Output" becomes the Windows default microphone. If an application has a
+specific microphone selected, pick "CABLE Output" there.
 
-Au premier lancement sans son, l'interface peut générer quelques sons de démo
-synthétisés (`demo_sounds.py`). Les réglages sont enregistrés dans `config.json`
-à côté du script (non versionné).
+On the first launch without any sounds, the interface can generate a few
+synthesized demo sounds (`demo_sounds.py`). Settings are saved in `config.json`
+next to the script (not versioned).
 
-## Structure
+## Layout
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `gui_qt.py` | Interface Qt : pages Voix, Sons, Mes soundboards, Labo de voix, Réglages |
-| `engine.py` | Moteur audio temps réel micro → voix → (+ soundboard) → sortie virtuelle / casque |
-| `dsp.py` | Nœuds DSP bloc par bloc (filtres, pitch shift, FFT, réverb, distorsion…) |
-| `presets.py` | Catalogue des voix = chaînes de nœuds |
-| `soundboard.py` | Bibliothèque de sons, options par son, mixeur |
-| `hotkeys.py` | Raccourcis clavier globaux (RegisterHotKey) |
-| `virtualmic.py` | Détection / installation d'un micro virtuel |
-| `demo_sounds.py` | Génération de sons de démo |
-| `sons/` | Sons de la soundboard « Général » et leurs réglages (`soundboard.json`) |
+| `gui_qt.py` | Qt interface: Voices, Sounds, My soundboards, Voice lab, Settings pages |
+| `engine.py` | Real-time audio engine: mic → voice → (+ soundboard) → virtual output / headphones |
+| `dsp.py` | Block-based DSP nodes (filters, pitch shift, FFT, reverb, distortion…) |
+| `presets.py` | Voice catalogue = node chains |
+| `soundboard.py` | Sound library, per-sound options, mixer |
+| `hotkeys.py` | Global hotkeys (RegisterHotKey) |
+| `virtualmic.py` | Virtual microphone detection / installation |
+| `demo_sounds.py` | Demo sound generation |
+| `sons/` | Sounds of the "General" soundboard and their settings (`soundboard.json`) |
 
-Windows uniquement (raccourcis globaux et micro virtuel reposent sur l'API Win32).
+Windows only (global hotkeys and the virtual microphone rely on the Win32 API).
