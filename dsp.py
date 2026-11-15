@@ -594,3 +594,160 @@ class EQ3(Node):
             return x
         y, self.zi = signal.sosfilt(self.sos, x, zi=self.zi)
         return y.astype(np.float32)
+
+
+# --------------------------------------------------------------------------- #
+#  Nettoyage du micro (Paramètres avancés) : réduction de bruit + noise gate
+# --------------------------------------------------------------------------- #
+def _find_rnnoise():
+    """Chemin de rnnoise.dll (paquet « pyrnnoise » ou à côté de Py Mod), ou None."""
+    import importlib.util
+    from pathlib import Path
+    cands = [Path(__file__).with_name("rnnoise.dll")]
+    try:
+        spec = importlib.util.find_spec("pyrnnoise")  # ne l'importe pas (ses dépendances sont lourdes)
+        for d in (spec.submodule_search_locations or []) if spec else []:
+            cands.append(Path(d) / "rnnoise.dll")
+    except Exception:
+        pass
+    return next((p for p in cands if p.is_file()), None)
+
+
+class RNNoise(Node):
+    """Réseau de neurones RNNoise (Xiph) — le même que Voicemod (« VAudioNodeRnnoise »).
+
+    Ne marche qu'à 48 kHz, par trames de 480 échantillons (10 ms de latence en plus).
+    """
+    FRAME = 480
+    _lib = None
+
+    @classmethod
+    def load(cls):
+        if cls._lib is None:
+            import ctypes
+            path = _find_rnnoise()
+            if path is None:
+                raise OSError("rnnoise.dll introuvable")
+            lib = ctypes.CDLL(str(path))
+            lib.rnnoise_create.argtypes = [ctypes.c_void_p]
+            lib.rnnoise_create.restype = ctypes.c_void_p
+            lib.rnnoise_destroy.argtypes = [ctypes.c_void_p]
+            fp = ctypes.POINTER(ctypes.c_float)
+            lib.rnnoise_process_frame.argtypes = [ctypes.c_void_p, fp, fp]
+            lib.rnnoise_process_frame.restype = ctypes.c_float
+            cls._lib = lib
+        return cls._lib
+
+    def __init__(self, sr):
+        super().__init__(sr)
+        if sr != 48000:
+            raise ValueError("RNNoise exige 48 kHz")
+        import ctypes
+        self._ct = ctypes
+        self.lib = self.load()
+        self.st = self.lib.rnnoise_create(None)
+        self.inbuf = np.zeros(0, np.float32)
+        self.outbuf = np.zeros(self.FRAME, np.float32)  # une trame de retard
+        self.frame_out = np.zeros(self.FRAME, np.float32)
+
+    def __del__(self):
+        try:
+            self.lib.rnnoise_destroy(self.st)
+        except Exception:
+            pass
+
+    def process(self, x):
+        self.inbuf = np.concatenate([self.inbuf, x])
+        outs = [self.outbuf]
+        fp = self._ct.POINTER(self._ct.c_float)
+        F = self.FRAME
+        while len(self.inbuf) >= F:
+            fr = np.ascontiguousarray(self.inbuf[:F] * 32768.0, dtype=np.float32)
+            self.inbuf = self.inbuf[F:]
+            self.lib.rnnoise_process_frame(self.st, self.frame_out.ctypes.data_as(fp), fr.ctypes.data_as(fp))
+            outs.append(self.frame_out / 32768.0)
+        out = np.concatenate(outs)
+        self.outbuf = out[len(x):]
+        return out[:len(x)].astype(np.float32)
+
+
+class SpectralDenoise(Stft):
+    """Réduction de bruit de secours (si RNNoise est absent) : bruit estimé par
+    « minimum statistics » (minimum de la puissance lissée sur ~0,7 s) + gain de Wiener."""
+
+    def __init__(self, sr, n=1024, hop=256, bias=2.0, floor=0.1):
+        super().__init__(sr, n, hop)
+        nb = n // 2 + 1
+        self.bias, self.floor = bias, floor
+        self.prev_a2 = np.zeros(nb)
+        self.S = None                         # puissance lissée
+        self.cur_min = np.full(nb, np.inf)    # minimum de la fenêtre en cours
+        self.prev_min = np.full(nb, np.inf)   # minimum de la fenêtre précédente
+        self.D = max(8, int(0.35 * sr / hop)) # ~0,35 s par fenêtre (2 fenêtres ≈ 0,7 s)
+        self.count = 0
+        self.gain = np.ones(nb)
+
+    def spectral(self, X):
+        p = np.abs(X) ** 2
+        self.S = p.copy() if self.S is None else 0.8 * self.S + 0.2 * p
+        self.cur_min = np.minimum(self.cur_min, self.S)
+        noise = np.minimum(self.cur_min, self.prev_min)
+        self.count += 1
+        if self.count >= self.D:
+            self.prev_min, self.cur_min, self.count = self.cur_min, np.full_like(self.cur_min, np.inf), 0
+        noise = np.where(np.isfinite(noise), noise, self.S) * self.bias
+        # gain de Wiener « decision-directed » (Ephraim-Malah) : peu de bruit musical
+        post = p / (noise + 1e-12)
+        xi = 0.98 * self.prev_a2 / (noise + 1e-12) + 0.02 * np.maximum(post - 1, 0)
+        g = np.maximum(xi / (1 + xi), self.floor)
+        self.prev_a2 = (g * g) * p
+        self.gain = g
+        return X * self.gain
+
+
+def has_rnnoise():
+    return _find_rnnoise() is not None
+
+
+def make_denoiser(sr):
+    """RNNoise si disponible (48 kHz), sinon le débruiteur spectral."""
+    try:
+        return RNNoise(sr)
+    except Exception:
+        return SpectralDenoise(sr)
+
+
+class GateDB(Node):
+    """Noise gate réglable en dB (comme « Niveau de la porte de bruit » de Voicemod).
+
+    Hystérésis de 6 dB + maintien 120 ms pour ne pas hacher la fin des mots.
+    """
+
+    def __init__(self, sr, threshold_db=-30.0):
+        super().__init__(sr)
+        self.set_threshold(threshold_db)
+        self.g = 0.0
+        self.env = 0.0
+        self.hold = 0
+
+    def set_threshold(self, db):
+        self.db = float(db)
+        self.open_th = 10 ** (self.db / 20)
+        self.close_th = 10 ** ((self.db - 6) / 20)
+
+    def process(self, x):
+        n = len(x)
+        peak = float(np.abs(x).max()) if n else 0.0
+        self.env = max(peak, self.env * 0.6)
+        if self.env > self.open_th:
+            self.hold = int(0.12 * self.sr)
+        elif self.env > self.close_th and self.g > 0.5:
+            self.hold = max(self.hold, n)
+        else:
+            self.hold = max(0, self.hold - n)
+        target = 1.0 if self.hold > 0 else 0.0
+        k = 0.8 if target > self.g else 0.25   # ouverture rapide, fermeture douce
+        g_new = self.g + k * (target - self.g)
+        ramp = np.linspace(self.g, g_new, n, dtype=np.float32)
+        self.g = g_new
+        return x * ramp

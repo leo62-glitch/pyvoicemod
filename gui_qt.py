@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QDialog
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle, QStyleOptionComboBox,
                                QStylePainter, QVBoxLayout, QWidget)
 
+from dsp import has_rnnoise as dsp_has_rnnoise
 from engine import Engine, list_devices
 from hotkeys import MOD_ALT, MOD_CTRL, MOD_SHIFT, GlobalHotkeys, key_label
 from presets import VOICES
@@ -75,6 +76,8 @@ ICONS = ["🔊", "📢", "🎺", "🥁", "🎉", "😂", "👏", "💥", "🔔",
          "💨", "⚡", "🔥", "💀", "👻", "🤖", "🎮", "🏆", "❌", "✅", "❤️", "⭐", "🎵", "🎬"]
 PLACEHOLDER = "Rechercher une voix ou un son…"
 ALL, FAVS = "Tous les sons", "Favoris"
+ADV_KEYS = ("noise_reduction", "noise_gate", "bypass_system")
+ADV_DEFAULTS = {"noise_reduction": True, "noise_gate": True, "bypass_system": True, "gate_db": -30.0}
 GAIN_KEYS = ("voice_gain", "voice_out", "voice_head", "sound_head", "out_gain", "head_gain")
 GAIN_DEFAULTS = {"mic_gain": 100, "sound_gain": 80, "voice_gain": 100, "voice_out": 100, "voice_head": 100,
                  "sound_head": 80, "out_gain": 100, "head_gain": 100}
@@ -1240,7 +1243,13 @@ class RoundBtn(Clickable):
     def __init__(self, glyph, d, kind, command, tip, parent=None):
         super().__init__(parent, command, tip)
         self.glyph, self.kind, self.on, self.d = glyph, kind, False, d
+        self.emoji = ""   # bouton micro : icône de la voix choisie (vide = micro dessiné)
         self.setFixedSize(d, d)
+
+    def set_emoji(self, e):
+        if e != self.emoji:
+            self.emoji = e
+            self.update()
 
     def set_on(self, v):
         if v != self.on:
@@ -1288,7 +1297,15 @@ class RoundBtn(Clickable):
                 bg, fg = qc("#3e4040" if h else BTN), qc(MUTED)
             p.setBrush(bg)
             p.drawEllipse(c, r, r)
-            self._draw_mic(p, c, fg)
+            if self.emoji:   # la voix choisie (écureuil, robot...) remplace le micro
+                p.setOpacity(1.0 if self.on else .45)
+                p.setFont(efont(34))
+                p.setPen(qc("#ffffff"))
+                p.drawText(QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r), Qt.AlignCenter, self.emoji)
+                p.setOpacity(1.0)
+                p.setPen(Qt.NoPen)
+            else:
+                self._draw_mic(p, c, fg)
             if not self.on:
                 p.setPen(QPen(qc(RED), 3, Qt.SolidLine, Qt.RoundCap))
                 p.drawLine(QPointF(c.x() - r * .45, c.y() - r * .45), QPointF(c.x() + r * .45, c.y() + r * .45))
@@ -1313,12 +1330,24 @@ class LastBtn(Clickable):
     def __init__(self, command, parent=None):
         super().__init__(parent, command, "Dernier son joué (clic pour rejouer)")
         self.sound = None
+        self.playing = False
         self.setFixedSize(60, 60)
 
     def set_sound(self, s):
         self.sound = s
-        self.setToolTip(f"Rejouer « {s.name} »" if s else "Aucun son joué")
+        self._tip()
         self.update()
+
+    def set_playing(self, v):
+        if v != self.playing:
+            self.playing = v
+            self._tip()
+            self.update()
+
+    def _tip(self):
+        s = self.sound
+        self.setToolTip("Aucun son joué" if not s else
+                        f"Arrêter « {s.name} »" if self.playing else f"Rejouer « {s.name} »")
 
     def paintEvent(self, e):
         p = painter(self)
@@ -1341,10 +1370,21 @@ class LastBtn(Clickable):
             p.setFont(ifont(18))
             p.setPen(qc("#55585a"))
             p.drawText(r, Qt.AlignCenter, G["music"])
-        if self.hover:
-            p.setPen(QPen(qc(CYAN), 2))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 6, 6)
+        if s and (self.hover or self.playing):   # voile sombre + ▶ (survol) ou ■ (en lecture : clic = stop)
+            p.fillPath(rpath(r, 6), qc("#000000", .5 if self.hover else .35))
+            c = r.center()
+            p.setPen(Qt.NoPen)
+            p.setBrush(qc("#ffffff"))
+            if self.playing:
+                p.drawRoundedRect(QRectF(c.x() - 10, c.y() - 10, 20, 20), 4, 4)
+            else:
+                tri = QPainterPath(QPointF(c.x() - 8, c.y() - 12))
+                tri.lineTo(c.x() + 13, c.y())
+                tri.lineTo(c.x() - 8, c.y() + 12)
+                tri.closeSubpath()
+                pen = QPen(qc("#ffffff"), 3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)   # coins arrondis
+                p.setPen(pen)
+                p.drawPath(tri)
 
 
 class ControlBar(QWidget):
@@ -2008,7 +2048,17 @@ class App(QWidget):
         self.engine.mic_gain = self.cfg.get("mic_gain", 1.0)
         self.engine.sound_gain = self.cfg.get("sound_gain", 0.8)
         self.engine.hear_myself = self.cfg.get("hear_myself", False)
-        self.engine.sounds_to_me = self.cfg.get("sounds_to_me", True)
+        if self.cfg.get("cfg_version", 1) < 2:   # avant : les sons revenaient toujours dans le casque
+            self.cfg["sounds_to_me"] = False
+            self.cfg["cfg_version"] = 2
+        if self.cfg.get("cfg_version", 1) < 3:   # avant : le casque restait sur « aucun » sans l'avoir choisi
+            if self._id_for_name_none(self.cfg.get("head")):
+                self.cfg.pop("head", None)
+            self.cfg["cfg_version"] = 3
+        self.engine.sounds_to_me = self.cfg.get("sounds_to_me", False)
+        for k in ADV_KEYS:
+            setattr(self.engine, k, bool(self.cfg.get(k, ADV_DEFAULTS[k])))
+        self.engine.set_gate_db(float(self.cfg.get("gate_db", ADV_DEFAULTS["gate_db"])))
         for k in GAIN_KEYS:
             setattr(self.engine, k, float(self.cfg.get(k, getattr(self.engine, k))))
         self.eq = list(self.cfg.get("eq", [50, 50, 50]))
@@ -2022,7 +2072,8 @@ class App(QWidget):
         self.sounds, self.hk = [], None
         self.page, self.history = None, []
         self.pages, self.heroes, self.meters = {}, {}, []
-        self.flag_widgets = {"voice_on": [], "hear_myself": [], "sounds_to_me": []}
+        self.flag_widgets = {"voice_on": [], "hear_myself": [], "sounds_to_me": [],
+                             **{k: [] for k in ADV_KEYS}}
         self.gain_widgets = {k: [] for k in ("mic_gain", "sound_gain") + GAIN_KEYS}
         self.tiles = {"sounds": {}, "board": {}}
         self.board = ROOT_BOARD
@@ -2031,6 +2082,7 @@ class App(QWidget):
         self.default_mic = vm.DefaultMic()   # micro par défaut Windows (Discord...)
         self.cable = None                    # câble virtuel utilisé (virtualmic.Cable)
         self.installer = None
+        self._install_tried = False
 
         self._build_layout()
         self._build_right_panel()
@@ -2044,6 +2096,8 @@ class App(QWidget):
             self.set_flag(k, getattr(self.engine, k))
 
         self._start_audio()
+        if not vm.find_cables():   # pas de micro virtuel : on installe VB-CABLE tout seul, sans fenêtre
+            QTimer.singleShot(600, self._install_cable)
         self.reload_sounds()
         self.select_voice(self.cfg.get("voice", "normal"))
         self.timer = QTimer(self)
@@ -2062,6 +2116,7 @@ class App(QWidget):
         self.cfg.update(voice=e.voice_id if e.voice_id != "custom" else "normal",
                         mic_gain=e.mic_gain, sound_gain=e.sound_gain,
                         hear_myself=e.hear_myself, sounds_to_me=e.sounds_to_me, eq=self.eq,
+                        gate_db=e.gate_db, **{k: getattr(e, k) for k in ADV_KEYS},
                         **{k: getattr(e, k) for k in GAIN_KEYS})
         try:
             CONFIG.write_text(json.dumps(self.cfg, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -2070,11 +2125,74 @@ class App(QWidget):
 
     # -- états partagés ----------------------------------------------------
     def set_flag(self, key, v, src=None):
+        changed = getattr(self.engine, key) != bool(v)
         setattr(self.engine, key, bool(v))
         for w in self.flag_widgets[key]:
             if w is not src:
                 w.set(bool(v))
         self.bar.set_state(key, bool(v))
+        if key == "bypass_system" and changed and self.engine.streams:
+            self._apply_devices()   # le mode RAW se choisit à l'ouverture du flux micro
+        if key in ("hear_myself", "sounds_to_me") and v and self.engine.streams and not self.engine.monitor:
+            self._alert_no_head()
+        if key in ("hear_myself", "sounds_to_me"):
+            self._refresh_head_warning()
+
+    NO_HEAD_MSG = ("Aucun casque n'est choisi : tu ne peux pas entendre ta voix ni les sons. "
+                   "Va dans Paramètres → Audio → Output → Casque et choisis ton casque ou tes haut-parleurs.")
+
+    def _need_head(self):
+        """Une option de retour est activée mais aucun casque n'est choisi."""
+        e = self.engine
+        return bool(e.streams) and not e.monitor and (e.hear_myself or e.sounds_to_me)
+
+    def _alert_no_head(self):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Aucun casque choisi")
+        box.setText(self.NO_HEAD_MSG)
+        go = box.addButton("Ouvrir les paramètres", QMessageBox.AcceptRole)
+        box.addButton("Plus tard", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is go:
+            self.go("settings")
+            self.set_tabs_select_audio()
+
+    def set_tabs_select_audio(self):
+        self.set_stack.setCurrentIndex(0)
+        self.set_tabs.sel = 0
+        self.set_tabs.update()
+
+    def _refresh_head_warning(self):
+        """Bandeau + icône d'alerte tant qu'un retour est demandé sans casque (sans écraser une autre alerte)."""
+        if not hasattr(self, "banner"):
+            return
+        cur = self.banner.text()
+        if self._need_head():
+            if self.banner.isHidden() or cur == self.NO_HEAD_MSG:
+                self.banner.setText(self.NO_HEAD_MSG)
+                self.banner.show()
+                self.warn.setVisible(True)
+                self.warn.setToolTip(self.NO_HEAD_MSG)
+        elif cur == self.NO_HEAD_MSG:
+            self.banner.hide()
+            self.warn.setVisible(False)
+
+    @staticmethod
+    def _id_for_name_none(name):
+        return not name or name.startswith("—")
+
+    def _default_head(self):
+        """Sortie par défaut de Windows (le casque), jamais un câble virtuel."""
+        try:
+            i = sd.default.device[1]
+            name = self._name_for(self.dev_out, i).lower()
+            if i is None or i < 0 or not name or any(w in name for w in (
+                    "cable", "voicemeeter", "voicemod", "steam streaming")):
+                return None
+            return i
+        except Exception:
+            return None
 
     def flag_toggle(self, key, text, width=236):
         t = Toggle(text, getattr(self.engine, key), width=width)
@@ -2135,8 +2253,11 @@ class App(QWidget):
             pos = btn.mapToGlobal(QPoint(0, 0))
             m.exec(QPoint(pos.x() - 40, pos.y() - m.sizeHint().height() - 14))
         elif key == "last":
-            if self.bar.last.sound:
-                self.play_sound(self.bar.last.sound)
+            s = self.bar.last.sound
+            if s and self.engine.mixer.state(s):   # en lecture (ou en pause) : le clic arrête le son
+                self.engine.mixer.stop(s)
+            elif s:
+                self.play_sound(s)
         else:
             self.set_flag(key, not getattr(self.engine, key))
 
@@ -2355,6 +2476,7 @@ class App(QWidget):
         idx = [v for v, *_ in VOICES].index(vid)
         self.sel.set_info(icon, name, cat, CAT_COLORS.get(cat, MAGENTA),
                           key_label(MOD_CTRL | MOD_ALT, 0x31 + idx) if idx < 9 else "")
+        self.bar.mic.set_emoji("" if vid == "normal" else icon)   # « Clean » garde le micro
 
     # -- page Sons ---------------------------------------------------------
     def _build_sounds_page(self):
@@ -2656,9 +2778,9 @@ class App(QWidget):
         self.banner.setWordWrap(True)
         self.banner.hide()
         al.addWidget(self.banner)
-        self.b_install = Btn("Installer le micro virtuel", G["mic"], "primary", self._install_cable, h=40, size=10,
-                             tip="Télécharge et installe VB-CABLE (gratuit) : Discord et les jeux entendront ta voix "
-                                 "modifiée. Windows demande une fois d'accepter le pilote.")
+        self.b_install = Btn("Réessayer l'installation du micro virtuel", G["mic"], "primary", self._install_cable, h=40, size=10,
+                             tip="Réessaie l'installation automatique de VB-CABLE (gratuit) : Discord et les jeux "
+                                 "entendront ta voix modifiée.")
         self.b_install.hide()
         al.addWidget(self.b_install, 0, Qt.AlignLeft)
 
@@ -2780,8 +2902,16 @@ class App(QWidget):
                          after=True)
         al.addWidget(self.b_adv, 0, Qt.AlignLeft)
         self.adv = QFrame(objectName="mixcard")
-        av = QGridLayout(self.adv)
-        av.setContentsMargins(18, 14, 18, 14)
+        advl = QVBoxLayout(self.adv)
+        advl.setContentsMargins(18, 14, 18, 14)
+        advl.setSpacing(16)
+        advl.addWidget(self._build_cleanup_panel())
+        hl_ = QFrame()
+        hl_.setFixedHeight(1)
+        hl_.setStyleSheet("background: #3a3c3c;")
+        advl.addWidget(hl_)
+        av = QGridLayout()
+        advl.addLayout(av)
         av.setHorizontalSpacing(40)
         av.addWidget(self.flag_toggle("voice_on", "Changeur de voix", 250), 0, 0)
         av.addWidget(self.flag_toggle("hear_myself", "M'entendre", 250), 0, 1)
@@ -2824,8 +2954,8 @@ class App(QWidget):
             "Py Mod se branche tout seul : il détecte un micro virtuel (VB-CABLE ou Voicemeeter), "
             "y envoie ta voix modifiée et le déclare micro par défaut de Windows. Discord, les jeux et les "
             "navigateurs réglés sur « Default » l'utilisent donc sans rien changer.\n\n"
-            "Pas de micro virtuel ? Onglet Audio → « Installer le micro virtuel » : VB-CABLE (gratuit) est "
-            "téléchargé et installé, Windows demande une seule fois d'accepter le pilote.\n\n"
+            "Pas de micro virtuel ? Py Mod télécharge et installe VB-CABLE (gratuit) tout seul au premier "
+            "lancement, sans fenêtre : Windows demande juste l'autorisation administrateur.\n\n"
             "Si une appli a un micro précis de sélectionné, choisis-y « CABLE Output » "
             "(le nom exact est affiché dans Audio → Paramètres avancés).\n\n"
             "Les faders jaunes règlent ce que TU entends dans ton casque, les cyan ce qui part vers "
@@ -2833,6 +2963,78 @@ class App(QWidget):
         hl.addWidget(help_card)
         hl.addStretch()
         self.set_stack.addWidget(aide)
+
+    def _build_cleanup_panel(self):
+        """Bloc « Paramètres avancés » façon Voicemod : réduction de bruit, noise gate, mode RAW."""
+        w = QWidget()
+        g = QGridLayout(w)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setHorizontalSpacing(48)
+        g.setVerticalSpacing(8)
+        g.addWidget(label("Ces paramètres avancés sont destinés au dépannage si tu rencontres des problèmes de qualité "
+                          "audio. La plupart des utilisateurs n'ont pas besoin de les modifier.", 10, QFont.DemiBold,
+                          wrap=True), 0, 0, 1, 2)
+        g.setRowMinimumHeight(1, 10)
+
+        def block(col, row, key, title, text):
+            box = QVBoxLayout()
+            box.setSpacing(6)
+            box.addWidget(self.flag_toggle(key, title, 360))
+            box.addWidget(label(text, 9, color=MUTED, wrap=True))
+            g.addLayout(box, row, col)
+
+        block(0, 2, "noise_reduction", "Réduction du bruit de fond",
+              "Supprime le bruit de fond de ton environnement (ventilateur, clavier, rue…) et améliore la clarté "
+              "de ta voix. " + ("Utilise RNNoise, le même réseau de neurones que Voicemod."
+                                if dsp_has_rnnoise() else
+                                "Version légère intégrée ; installe RNNoise (pip install pyrnnoise --no-deps) "
+                                "pour un résultat bien meilleur."))
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: #3a3c3c;")
+        g.addWidget(sep, 3, 0)
+        block(0, 4, "bypass_system", "Contourner le traitement audio du système",
+              "Empêche Windows et le pilote du micro d'interférer avec le traitement de Py Mod (mode « RAW » "
+              "WASAPI : sans suppression de bruit ni contrôle de gain automatique du système).")
+
+        right = QVBoxLayout()
+        right.setSpacing(6)
+        right.addWidget(self.flag_toggle("noise_gate", "Noise Gate", 360))
+        right.addWidget(label("Annule tous les bruits sous un certain volume. Attention : un niveau de Noise Gate "
+                              "élevé peut couper ta propre voix.", 9, color=MUTED, wrap=True))
+        right.addSpacing(10)
+        head = QHBoxLayout()
+        head.addWidget(label("Niveau de la porte de bruit", 10, QFont.DemiBold))
+        head.addStretch()
+        self.gate_badge = QLabel()
+        self.gate_badge.setFont(font(9, QFont.DemiBold))
+        self.gate_badge.setAlignment(Qt.AlignCenter)
+        self.gate_badge.setMinimumWidth(64)
+        self.gate_badge.setStyleSheet("background: #2a2a32; border-radius: 6px; padding: 3px 8px;")
+        head.addWidget(self.gate_badge)
+        right.addLayout(head)
+        self.gate_slider = Slider(-100, 0, self.engine.gate_db, self._set_gate_db, length=420,
+                                  colors=(GREEN, GREEN), show_value=False)
+        right.addWidget(self.gate_slider, 0, Qt.AlignLeft)
+        right.addSpacing(6)
+        right.addWidget(Btn("Réinitialiser par défaut", kind="panel", command=self._reset_cleanup, h=40, size=10),
+                        0, Qt.AlignLeft)
+        right.addStretch()
+        g.addLayout(right, 2, 1, 3, 1)
+        g.setColumnStretch(0, 1)
+        g.setColumnStretch(1, 1)
+        self._set_gate_db(self.engine.gate_db)
+        return w
+
+    def _set_gate_db(self, v):
+        self.engine.set_gate_db(v)
+        self.gate_badge.setText(f"{v:.0f} dB")
+
+    def _reset_cleanup(self):
+        for k in ADV_KEYS:
+            self.set_flag(k, ADV_DEFAULTS[k])
+        self.gate_slider.set(ADV_DEFAULTS["gate_db"])
+        self._set_gate_db(ADV_DEFAULTS["gate_db"])
 
     def _settings_tab(self, i):
         if i == 1:
@@ -2923,6 +3125,11 @@ class App(QWidget):
                     head = sd.default.device[1]
             if virt is None:
                 virt = sd.default.device[1]
+            # pas de casque choisi : la sortie par défaut de Windows sert de retour
+            if head is None and "head" not in self.cfg:   # tout premier lancement seulement
+                head = self._default_head()
+                if head == virt:
+                    head = None
         self.cb_mic.setCurrentText(self._name_for(self.dev_in, mic))
         self.cb_virt.setCurrentText(self._name_for(self.dev_out, virt))
         self.cb_head.setCurrentText(self._name_for(self.dev_out, head) or "— aucun —")
@@ -2934,17 +3141,20 @@ class App(QWidget):
         if not ok:
             msg = f"Impossible d'ouvrir l'audio : {self.engine.error}"
         elif self.cable is None and not cables:
-            msg = ("Aucun micro virtuel : ta voix sort dans tes haut-parleurs et Discord ne l'entend pas. "
-                   "Clique sur « Installer le micro virtuel » (une seule fois, environ une minute).")
+            msg = ("Aucun micro virtuel : installation automatique de VB-CABLE en cours…"
+                   if self.installer is not None else
+                   "Aucun micro virtuel : Discord n'entend pas ta voix. "
+                   "Clique sur « Réessayer l'installation du micro virtuel ».")
         elif self.cable is None:
             msg = (f"La sortie virtuelle n'est pas un micro virtuel : choisis « {cables[0].out_name} » "
                    "pour que Discord entende ta voix.")
         self._update_default_mic()
         self.banner.setText(msg)
         self.banner.setVisible(bool(msg))
-        self.b_install.setVisible(ok and not cables and self.installer is None)
+        self.b_install.setVisible(not cables and self.installer is None and self._install_tried)
         self.warn.setVisible(bool(msg))
         self.warn.setToolTip(msg)
+        self._refresh_head_warning()
         self._refresh_cable_label()
 
     # -- micro virtuel ----------------------------------------------------
@@ -2992,6 +3202,8 @@ class App(QWidget):
     def _install_cable(self):
         if self.installer is not None:
             return
+        self._install_tried = True
+        self.b_install.hide()
         self.installer = CableInstaller()
         self.installer.progress.connect(self._install_progress)
         self.installer.done.connect(self._install_done)
@@ -3072,10 +3284,14 @@ class App(QWidget):
             if t.isVisible():
                 t.refresh()
         self.bar.set_state("running", on)
+        last = self.bar.last.sound
+        self.bar.last.set_playing(bool(last) and self.engine.mixer.state(last) == "playing")
         if on != self._running:
             self._running = on
             self.dot.setStyleSheet(f"background: {GREEN if on else RED}; border-radius: 4px;")
-        st = f"{'Audio actif' if on else 'Audio arrêté'}  ·  {self.engine.sr} Hz  ·  charge DSP {self.engine.load:.0f} %"
+        raw = "  ·  micro en mode RAW" if on and self.engine.raw_active else ""
+        st = (f"{'Audio actif' if on else 'Audio arrêté'}  ·  {self.engine.sr} Hz  ·  "
+              f"charge DSP {self.engine.load:.0f} %{raw}")
         self.dot.setToolTip(st)
         if self.adv.isVisible():
             self.lbl_status.setText(st)

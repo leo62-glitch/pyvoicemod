@@ -18,8 +18,8 @@ On ne peut pas livrer un driver noyau signé depuis Python, alors :
   1. on réutilise VB-CABLE (ou Voicemeeter, du même éditeur) s'il est déjà installé ;
      le driver de Voicemod n'est volontairement PAS utilisé : Py Mod ne dépend
      d'aucun fichier Voicemod ;
-  2. sinon on télécharge et installe VB-CABLE (gratuit, donationware) — Windows
-     affiche une seule fenêtre pour accepter le pilote, impossible à éviter ;
+  2. sinon on télécharge et installe VB-CABLE (gratuit, donationware) en silencieux,
+     automatiquement au lancement (seule l'autorisation administrateur UAC reste) ;
   3. on rend le micro virtuel « micro par défaut » (comme AudioEndPointTool) et on
      remet l'ancien à la fermeture.
 """
@@ -31,6 +31,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 import zipfile
 from ctypes import POINTER, Structure, byref, c_int, c_longlong, c_ushort, c_void_p
@@ -336,14 +337,15 @@ class SHELLEXECUTEINFOW(Structure):
                 ("dwHotKey", DWORD), ("hIcon", c_void_p), ("hProcess", c_void_p)]
 
 
-def run_elevated(exe: str, args: str = "", cwd: str | None = None, timeout_s: int = 600) -> int | None:
+def run_elevated(exe: str, args: str = "", cwd: str | None = None, timeout_s: int = 600,
+                 hidden: bool = False) -> int | None:
     """Lance `exe` en administrateur (UAC) et attend la fin. Retourne le code de sortie, None si refusé."""
     SEE_MASK_NOCLOSEPROCESS = 0x40
     info = SHELLEXECUTEINFOW()
     info.cbSize = ctypes.sizeof(info)
     info.fMask = SEE_MASK_NOCLOSEPROCESS
     info.lpVerb, info.lpFile, info.lpParameters, info.lpDirectory = "runas", exe, args, cwd
-    info.nShow = 1
+    info.nShow = 0 if hidden else 1   # SW_HIDE : aucune fenêtre
     if not ctypes.windll.shell32.ShellExecuteExW(byref(info)):
         return None  # UAC refusé
     k32 = ctypes.windll.kernel32
@@ -355,7 +357,12 @@ def run_elevated(exe: str, args: str = "", cwd: str | None = None, timeout_s: in
 
 
 def install_vb_cable(progress=lambda msg: None) -> tuple[bool, str]:
-    """Télécharge VB-CABLE et lance son installateur (silencieux, hors fenêtre Windows « pilote »).
+    """Télécharge VB-CABLE et l'installe en silencieux (aucune fenêtre ; seul l'UAC de Windows s'affiche
+    si Py Mod n'est pas déjà lancé en administrateur — impossible d'installer un pilote sans).
+
+    Le pilote Windows 10/11 de VB-CABLE est signé par Microsoft (attestation WHQL) : pas de fenêtre
+    « Voulez-vous installer ce périphérique ? ». L'installateur est lancé avec « -i -h » (install, hidden)
+    et SW_HIDE.
 
     Retourne (succès, message). Les sorties/entrées par défaut de Windows sont
     préservées (VB-CABLE a tendance à devenir la sortie par défaut après installation).
@@ -379,12 +386,16 @@ def install_vb_cable(progress=lambda msg: None) -> tuple[bool, str]:
         if not exes:
             return False, "Installateur introuvable dans l'archive VB-CABLE."
         setup = exes[0]
-        progress("Installation du pilote… accepte la fenêtre Windows « Installer ce pilote »")
-        code = run_elevated(str(setup), "-i -h", str(setup.parent))
+        progress("Installation du micro virtuel en arrière-plan…")
+        code = run_elevated(str(setup), "-i -h", str(setup.parent), hidden=True)
         if code is None:
             return False, "Installation annulée (droits administrateur refusés)."
         progress("Pilote installé, recherche du nouveau micro…")
-        rescan_devices()
+        for _ in range(20):   # le périphérique met quelques secondes à apparaître
+            rescan_devices()
+            if find_cable() is not None:
+                break
+            time.sleep(0.5)
         # Windows peut avoir basculé la sortie par défaut vers « CABLE Input » : on remet l'ancienne.
         for (flow, role), eid in before.items():
             if eid and default_endpoint(flow, role) != eid:

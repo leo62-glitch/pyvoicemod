@@ -19,6 +19,9 @@ or OBS see as a regular mic.
 - **Virtual microphone**: automatic detection and installation of VB-CABLE
   (`virtualmic.py`), then switching of the Windows default microphone. No
   Voicemod file or driver is used.
+- **Advanced settings** (like Voicemod): background noise reduction (RNNoise,
+  with a built-in numpy fallback), noise gate with adjustable level, and
+  "bypass system audio processing" (WASAPI RAW mode on the microphone).
 - Low-latency PortAudio engine (sounddevice), with an automatic fallback to two
   buffer-linked streams when the microphone and the output are not on the same
   Windows host API (`engine.py`).
@@ -30,13 +33,14 @@ git clone https://github.com/leo62-glitch/pyvoicemod.git
 cd pyvoicemod
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
+.\.venv\Scripts\pip install pyrnnoise --no-deps   # optional: better noise reduction
 .\.venv\Scripts\python.exe gui_qt.py
 ```
 
 To act as a microphone in another application, Py Mod uses VB-CABLE
-(VB-Audio Virtual Cable, free). If it is not installed, the Audio tab offers
-"Install the virtual microphone": silent download and installation, after which
-"CABLE Output" becomes the Windows default microphone. If an application has a
+(VB-Audio Virtual Cable, free). If it is not installed, Py Mod downloads and
+installs it automatically and silently on launch (only the Windows UAC prompt
+appears), after which "CABLE Output" becomes the Windows default microphone. If an application has a
 specific microphone selected, pick "CABLE Output" there.
 
 On the first launch without any sounds, the interface can generate a few

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-from dsp import EQ3
+from dsp import EQ3, GateDB, make_denoiser
 from presets import PRESETS
 from soundboard import SoundMixer
 
@@ -74,6 +74,35 @@ def find_virtual_cable():
     return None
 
 
+def raw_settings():
+    """Réglages WASAPI « mode RAW » : le flux micro passe à côté des effets Windows/pilote
+    (suppression de bruit, AGC, « améliorations audio »...), comme le « BypassSystem » de Voicemod."""
+    st = sd.WasapiSettings(auto_convert=True)
+    # PortAudio 19.7 n'accepte que version=1, mais la structure contient déjà streamOption
+    st._streaminfo.streamOption = sd._lib.eStreamOptionRaw
+    return st
+
+
+def wasapi_twin(index, inp=True):
+    """Même périphérique, mais côté [Windows WASAPI] (les noms MME sont tronqués à 31 caractères)."""
+    try:
+        devs = sd.query_devices()
+        apis = sd.query_hostapis()
+        i = index if index is not None else sd.default.device[0 if inp else 1]
+        d = devs[i]
+        if apis[d["hostapi"]]["name"] == "Windows WASAPI":
+            return i
+        name = d["name"].strip()
+        key = "max_input_channels" if inp else "max_output_channels"
+        for j, o in enumerate(devs):
+            if (apis[o["hostapi"]]["name"] == "Windows WASAPI" and o[key] > 0
+                    and o["name"].startswith(name)):
+                return j
+    except Exception:
+        pass
+    return None
+
+
 class Engine:
     def __init__(self, sr=48000):
         self.sr = sr
@@ -82,7 +111,7 @@ class Engine:
         self.chain = PRESETS["normal"](sr)
         self.voice_on = True
         self.hear_myself = False
-        self.sounds_to_me = True     # entendre le soundboard dans le casque
+        self.sounds_to_me = False    # entendre le soundboard dans le casque (option, comme « M'entendre »)
         self.mic_gain = 1.0
         self.sound_gain = 0.8        # sons -> sortie virtuelle
         # table de mixage (1.0 = 100 %)
@@ -103,6 +132,20 @@ class Engine:
         self.streams: list = []
         self.error: str | None = None
         self.devices = (None, None, None)  # micro, sortie virtuelle, casque
+        # Paramètres avancés (comme Voicemod : RNNoise, NoiseGate, mode RAW WASAPI)
+        self.noise_reduction = True
+        self.noise_gate = True
+        self.denoiser = make_denoiser(sr)
+        self.gate = GateDB(sr, -30.0)
+        self.bypass_system = True
+        self.raw_active = False      # le mode RAW a-t-il vraiment pu être activé ?
+
+    def set_gate_db(self, db):
+        self.gate.set_threshold(db)
+
+    @property
+    def gate_db(self):
+        return self.gate.db
 
     # -- voix --------------------------------------------------------------
     def set_voice(self, voice_id, factory=None):
@@ -123,6 +166,10 @@ class Engine:
         t0 = time.perf_counter()
         x = indata[:, 0] * self.mic_gain
         self.level = max(float(np.abs(x).max()), self.level * 0.85)
+        if self.noise_reduction:
+            x = self.denoiser.process(x)
+        if self.noise_gate:
+            x = self.gate.process(x)
         s, mute_voice = self.mixer.mix(frames)
         with self.lock:
             v = self.chain.process(x) if self.voice_on else x
@@ -153,22 +200,33 @@ class Engine:
         self.stop()
         self.error = None
         self.devices = (mic, virtual_out, headphones)
+        self.raw_active = False
+        if self.bypass_system:
+            raw_mic = wasapi_twin(mic, inp=True)
+            sr0 = self.sr
+            raw_out = wasapi_twin(virtual_out, inp=False) or virtual_out   # même API = un seul flux duplex
+            if raw_mic is not None and self._open(raw_mic, raw_out, headphones, raw=True):
+                self.raw_active = True
+                return True
+            self._set_sr(sr0)
+        return self._open(mic, virtual_out, headphones)
+
+    def _open(self, mic, virtual_out, headphones, raw=False):
+        """Ouvre les flux. raw=True : micro WASAPI en mode RAW (contourne le traitement audio de Windows)."""
         same_api = self._same_hostapi(mic, virtual_out)
+        in_extra = raw_settings() if raw else None
         for sr in (self.sr, 48000, 44100):
             try:
-                if sr != self.sr:
-                    self.sr = sr
-                    self.mixer.sr = sr
-                    self.set_voice(self.voice_id)
-                    self.set_eq(*self.eq_db)
-                    self.eq.zi[:] = 0
+                self._set_sr(sr)
                 kw = dict(samplerate=sr, blocksize=BLOCK, dtype="float32", latency="low", channels=1)
                 if same_api:
-                    self.streams = [sd.Stream(device=(mic, virtual_out), callback=self._main_cb, **kw)]
+                    extra = (in_extra, sd.WasapiSettings(auto_convert=True)) if raw else None
+                    self.streams = [sd.Stream(device=(mic, virtual_out), callback=self._main_cb,
+                                              extra_settings=extra, **kw)]
                 else:  # ex. micro [MME] et câble [WASAPI] : deux flux reliés par un tampon
                     self.out_fifo = Fifo(BLOCK * 8)
                     self.out_fifo.push(np.zeros(BLOCK * 2, np.float32))
-                    self.streams = [sd.InputStream(device=mic, callback=self._in_cb, **kw),
+                    self.streams = [sd.InputStream(device=mic, callback=self._in_cb, extra_settings=in_extra, **kw),
                                     sd.OutputStream(device=virtual_out, callback=self._out_cb, **kw)]
                 self.monitor = headphones is not None and headphones != virtual_out
                 if self.monitor:
@@ -182,6 +240,17 @@ class Engine:
                 self.error = str(e)
                 self.stop()
         return False
+
+    def _set_sr(self, sr):
+        if sr == self.sr:
+            return
+        self.sr = sr
+        self.mixer.sr = sr
+        self.set_voice(self.voice_id)
+        self.set_eq(*self.eq_db)
+        self.eq.zi[:] = 0
+        self.denoiser = make_denoiser(sr)
+        self.gate = GateDB(sr, self.gate.db)
 
     @staticmethod
     def _same_hostapi(a, b):
